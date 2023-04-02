@@ -1,0 +1,794 @@
+---
+title: "ME"
+author: "Chris Ross"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+
+```{r}
+pacman::p_load(tidyverse, 
+               ggplot2,
+               DescTools,
+               ggExtra,
+               kableExtra,
+               modelsummary,
+               patchwork,
+               labelled,
+               sjPlot,
+               ggside,
+               stargazer,
+               KRLS,
+               performance,
+               interflex,
+               estimatr,
+               effects,
+               ggeffects,
+               marginaleffects,
+               Rcpp,
+               margins,
+               lubridate,
+               texreg,
+               cobalt,
+               MatchIt,
+               sandwich)
+
+options(dplyr.summarise.inform = FALSE)
+
+
+
+```
+
+
+
+```{r}
+cemp <- read.csv("cemp.csv")
+
+cemp <- cemp %>% select(Party_policies_1_1_pre,
+                        Party_policies_1_2_pre,
+                        Party_policies_1_3_pre,
+                        Party_policies_1_4_pre,
+                        Party_policies_1_5_pre,
+                        Party_policies_1_6_pre,
+                        Party_policies_2_1_pre,
+                        Party_policies_2_2_pre,
+                        Party_policies_2_3_pre,
+                        Party_policies_2_4_pre,
+                        Party_policies_2_5_pre,
+                        Party_policies_2_6_pre,
+                        Party_policies_3_1_pre,
+                        Party_policies_3_2_pre,
+                        Party_policies_3_3_pre,
+                        Party_policies_3_4_pre,
+                        Party_policies_3_5_pre,
+                        Party_policies_3_6_pre,
+                        Party_policies_4_1_pre,
+                        Party_policies_4_2_pre,
+                        Party_policies_4_3_pre,
+                        Party_policies_4_4_pre,
+                        Party_policies_4_5_pre,
+                        Party_policies_4_6_pre,
+                        Party_policies_5_1_pre,
+                        Party_policies_5_2_pre,
+                        Party_policies_5_3_pre,
+                        Party_policies_5_4_pre,
+                        Party_policies_5_5_pre,
+                        Party_policies_5_6_pre,
+                        Party_policies_6_1_pre,
+                        Party_policies_6_2_pre,
+                        Party_policies_6_3_pre,
+                        Party_policies_6_4_pre,
+                        Party_policies_6_5_pre,
+                        Party_policies_6_6_pre,
+                        carbon_climatechange_pre,
+                        carbon_personeffects_pre,
+                        carbon_accurate_pre,
+                        carbon_continue_pre,
+                        Carbonpricingexperiment_DO_carbon_prompt_treat_pre,
+                        Carbonpricingexperiment_DO_carbon_prompt_contro_pre,
+                        votechoice_pre,
+                        caron_in.decrease_pre,
+                        ideol_1_pre,
+                        pid_pre, 
+                        Income_pre,
+                        lead_rating_2_pre,
+                        Duration..in.seconds._pre,
+                        identities_3_pre,
+                        identities_4_pre,
+                        identities_2_pre,
+                        gender_pre,
+                        straight_line_pre,
+                        RecordedDate_pre)
+#simplify gender into binary (I dont know how to make this not problematic sorry)
+cemp$gender <- NA
+cemp$gender[cemp$gender_pre == 2] <- "Woman"
+cemp$gender[cemp$gender_pre == 1] <- "Man"
+#code rural identification as binary, self identification
+cemp$rural <- NA
+cemp$rural <- ifelse(is.na(cemp$identities_3_pre)== T, 0, 1)
+cemp$income <- NA
+
+#turn IDK to NA for income
+cemp$Income_pre[cemp$Income_pre == 9] <- NA
+cemp$income <- ifelse(cemp$Income_pre <= 4, "Less than 90K", "More than 90K")
+
+
+
+cemp$ideology <- cemp$ideol_1_pre
+cemp$treatment <- cemp$Carbonpricingexperiment_DO_carbon_prompt_treat_pre
+cemp$treatment[cemp$Carbonpricingexperiment_DO_carbon_prompt_contro_pre == 1] <- "Control"
+cemp$treatment[cemp$treatment == 1] <- "Treatment"
+
+cemp <- cemp %>%  
+  mutate(con_binary = as.factor(ifelse(pid_pre == 2,"Conservative", "Not Conservative")))
+cemp$con_binary <- factor(cemp$con_binary, levels = c("Not Conservative","Conservative"))
+
+cemp$treatment <- as.factor(cemp$treatment)
+##accurate outcome
+cemp$accurate <- cemp$carbon_accurate_pre
+cemp$accurate[cemp$carbon_accurate_pre == 4] <- 0
+cemp$accurate[cemp$carbon_accurate_pre == 3] <- 1
+cemp$accurate[cemp$carbon_accurate_pre == 2] <- 2
+cemp$accurate[cemp$carbon_accurate_pre == 1] <- 3
+##continue continue
+cemp$continue <- cemp$carbon_continue_pre
+cemp$continue[cemp$carbon_continue_pre == 1] <- 4
+cemp$continue[cemp$carbon_continue_pre == 2] <- 3
+cemp$continue[cemp$carbon_continue_pre == 3] <- 2
+cemp$continue[cemp$carbon_continue_pre == 4] <- 1
+cemp$continue[cemp$carbon_continue_pre == 5] <- 0
+###increase continue
+cemp$increase <- cemp$caron_in.decrease_pre
+cemp$increase[cemp$caron_in.decrease_pre == 1] <- 4
+cemp$increase[cemp$caron_in.decrease_pre == 2] <- 3
+cemp$increase[cemp$caron_in.decrease_pre == 3] <- 2
+cemp$increase[cemp$caron_in.decrease_pre == 4] <- 1
+cemp$increase[cemp$caron_in.decrease_pre == 5] <- 0
+
+
+cemp_exp <- cemp %>% 
+  filter(!is.na(treatment == TRUE))
+
+
+```
+
+
+```{r}
+
+
+con_model <- lm(data = cemp_exp, accurate ~ treatment*con_binary + income + gender + rural)
+marginaleffects::slopes(con_model, vcov = sandwich::vcovHC(con_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("con_binary")) %>% data.frame() %>% 
+  ggplot(aes(x = con_binary, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_point(aes(col = con_binary), size = 3) +
+   geom_errorbar(width = 0.05, aes(col = con_binary), size = 1)+
+      scale_color_manual(values = c("black", "#00CBFE")) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Policy Knowledge") + 
+   theme(legend.position = "none")  +
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("con_model_accurate.png")
+
+
+
+ideo_model <- lm(data = cemp_exp, accurate ~ treatment*ideology + income + gender + rural)
+marginaleffects::slopes(ideo_model, vcov = sandwich::vcovHC(ideo_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("ideology")) %>% data.frame() %>% 
+  ggplot(aes(x = ideology, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_line(size = 1) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Policy Knowledge") + 
+  geom_ribbon(alpha= 0.1, color = 'grey') +
+  scale_x_continuous(breaks=c(0:10)) +
+  xlab("Ideology") +
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("ideo_model_accurate.png")
+
+
+```
+```{r}
+con_model <- lm(data = cemp_exp, continue ~ treatment*con_binary + rural + income + gender)
+marginaleffects::slopes(con_model, vcov = sandwich::vcovHC(con_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("con_binary")) %>% data.frame() %>% 
+  ggplot(aes(x = con_binary, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_point(aes(col = con_binary), size = 3) +
+   geom_errorbar(width = 0.05, aes(col = con_binary), size = 1)+
+      scale_color_manual(values = c("black", "#00CBFE")) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Policy Support") + 
+   theme(legend.position = "none")+
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("con_model_continue.png")
+
+
+
+ideo_model <- lm(data = cemp_exp, continue ~ treatment*ideology + income + gender + rural)
+marginaleffects::slopes(ideo_model, vcov = sandwich::vcovHC(ideo_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("ideology")) %>% data.frame() %>% 
+  ggplot(aes(x = ideology, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_line(size = 1) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Policy Support") + 
+  geom_ribbon(alpha= 0.1, color = 'grey') +
+  scale_x_continuous(breaks=c(0:10)) +
+  xlab("Ideology")+
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("ideo_model_continue.png")
+
+```
+
+```{r}
+con_model <- lm(data = cemp_exp, increase ~ treatment*con_binary + rural + income + gender)
+marginaleffects::slopes(con_model, vcov = sandwich::vcovHC(con_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("con_binary")) %>% data.frame() %>% 
+  ggplot(aes(x = con_binary, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_point(aes(col = con_binary), size = 3) +
+   geom_errorbar(width = 0.05, aes(col = con_binary), size = 1)+
+      scale_color_manual(values = c("black", "#00CBFE")) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Price Increase") + 
+   theme(legend.position = "none")+
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("con_model_increase.png")
+
+
+ideo_model <- lm(data = cemp_exp, increase ~ treatment*ideology + income + gender + rural)
+marginaleffects::slopes(ideo_model, vcov = sandwich::vcovHC(ideo_model, type = "HC2"),
+  variables = "treatment",   conf_level = 0.95,
+  slope = "dydx",
+  by = c("ideology")) %>% data.frame() %>% 
+  ggplot(aes(x = ideology, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  geom_line(size = 1) +
+geom_hline(yintercept = 0) +
+  theme_bw() + xlab("") + ylab("Marginal Effect of Treatment on Price Increase") + 
+  geom_ribbon(alpha= 0.1, color = 'grey') +
+  scale_x_continuous(breaks=c(0:10)) +
+  xlab("Ideology")+
+theme(axis.text.x = element_text(size = 12))+
+theme(axis.title.x = element_text(size = 12))+
+  theme(axis.text.y = element_text(size = 12))+
+theme(axis.title.y = element_text(size = 12))
+ggsave("ideo_model_increase.png")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#dropping NAs
+cemp_bal <- cemp_exp  %>% select(treatment, con_binary, income, rural, gender, ideology) %>%
+  mutate(Rural = ifelse(rural == 1, 1, 0),
+         Woman = ifelse(gender == "Woman",1,0),
+         Income = income) %>% 
+  drop_na()
+
+
+new.names <- c(con_binary_Conservative = "Conservative",
+               'Income_More than 90K' = "Income")
+
+love.plot(treatment ~ con_binary + Income + Woman + Income + Rural, 
+          data = cemp_bal,
+          col = "black", var.names = new.names)+
+  theme(legend.position = "none")
+
+#Keeping NAs
+cemp_bal <- cemp_exp  %>% select(treatment, con_binary, income, rural, gender, ideology) %>%
+  mutate(Rural = ifelse(rural == 1, 1, 0),
+         Woman = ifelse(gender == "Woman",1,0),
+         Ideology = ideology,
+         Income = income) 
+
+new.names <- c(con_binary_Conservative = "Conservative",
+               'Income_More than 90K' = "Income",
+               ideology = "Ideology",
+               'ideology:<NA>' = "Ideology NA",
+               'Income:<NA>' = "Income NA",
+               'Woman:<NA>' = "Woman NA")
+
+love.plot(treatment ~ con_binary + ideology + Income + Woman + Income + Rural, 
+          data = cemp_bal,
+          col = "black", var.names = new.names)+
+  theme(legend.position = "none",
+        axis.text.x = element_text(size = 12),
+      axis.title.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12))
+ggsave("balance_table.png")
+```
+
+
+
+
+\newpage
+## Interflex marginal estmates
+
+```{r}
+
+#accuracy <- interflex(X = "ideology" ,D = "treatment", Y = "accurate", data = cemp_exp, estimator = "kernel", vcov.type = "robust", main = "Marginal Effects: Policy Knowledge", na.rm = T, base = "Control")
+#accuracy$figure
+
+
+#continue <- interflex(X = "ideology" ,D = "treatment", Y = "continue", data = cemp_exp, estimator = "kernel", vcov.type = "robust", main = "Marginal Effects: Policy Support", na.rm = T, base = "Control")
+#continue$figure
+
+#increase <- interflex(X = "ideology" ,D = "treatment", Y = "increase", data = cemp_exp, estimator = "kernel", vcov.type = "robust", main = "Marginal Effects: Price Change", na.rm = T, base = "Control")
+#increase$figure
+```
+
+
+
+
+
+
+```{r}
+
+
+#inter.test(accuracy, diff.values=c(4,6,8), percentile=FALSE) %>% kable(caption = "Policy Knowledge: Comparing Treatment Effect Across Ideology Moderator")
+#inter.test(continue, diff.values=c(4,6,8), percentile=FALSE)%>% kable(caption = "Policy Support: Comparing Treatment Effect Across Moderator")
+#inter.test(increase, diff.values=c(4,6,8), percentile=FALSE)%>% kable(caption = "Price Change: Comparing Treatment Effect Across Moderator")
+```
+```{r, results='asis'}
+
+### accuracte regressions
+one = lm(data = cemp_exp, accurate ~ treatment)
+two = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural)
+three = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +con_binary)
+four = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +con_binary + treatment:con_binary)
+five = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +ideology)
+six = lm(data = cemp_exp, accurate ~ treatment+ gender +income +rural +ideology + treatment:ideology)
+
+cov1        <- vcovHC(one, type = "HC2")
+robust1     <- sqrt(diag(cov1))
+
+cov2        <- vcovHC(two, type = "HC2")
+robust2     <- sqrt(diag(cov2))
+
+cov3        <- vcovHC(three, type = "HC2")
+robust3     <- sqrt(diag(cov3))
+
+cov4        <- vcovHC(four, type = "HC2")
+robust4     <- sqrt(diag(cov4))
+
+cov5        <- vcovHC(five, type = "HC2")
+robust5     <- sqrt(diag(cov5))
+
+cov6        <- vcovHC(six, type = "HC2")
+robust6     <- sqrt(diag(cov6))
+
+models1 <- list(
+one = lm(data = cemp_exp, accurate ~ treatment),
+two = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural),
+three = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +con_binary),
+four = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +con_binary + treatment:con_binary),
+five = lm(data = cemp_exp, accurate ~ treatment + gender +income +rural +ideology),
+six = lm(data = cemp_exp, accurate ~ treatment+ gender +income +rural +ideology + treatment:ideology))
+
+stargazer(models1,
+          type = 'latex',
+          se=list(robust1, 
+                  robust2,
+                  robust3, 
+                  robust4,
+                  robust5, 
+                  robust6),
+          header=FALSE, # to get rid of r package output text
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          font.size = "small", # to make font size smaller
+           title="Policy Understanding",
+          dep.var.caption = "Carbon pricing is ... most cost-effective?", 
+          column.labels = c("Bivariate",
+                            "Controls", 
+                            '\\shortstack{Conservative \\\\ Partisanship}',
+                            '\\shortstack{Partisanship \\\\ Interaction}',
+                            '\\shortstack{Conservative \\\\ Ideology}',
+                             '\\shortstack{Ideology \\\\ Interaction}'),
+          model.numbers = F,
+          single.row=F,
+          omit.stat=c("f", "ser"),
+          covariate.labels = c("Treatment",
+                               "Woman",
+                               ">90K income",
+                               "Rural",
+                               '\\shortstack{Conservative  \\\\ Identification}',
+                               '\\shortstack{Conservative  \\\\ Interaction}',
+                               "Ideology",
+                               "\\shortstack{Ideology \\\\ Interaction}"),
+          dep.var.labels=c("Not at all accurate (0) - Very accurate (3)"),
+          out =  "models1.tex")
+
+
+```
+
+
+```{r, results='asis'}
+#### continue regressions
+one = lm(data = cemp_exp, continue ~ treatment)
+two = lm(data = cemp_exp, continue ~ treatment + gender +income +rural)
+three = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +con_binary)
+four = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +con_binary + treatment:con_binary)
+five = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +ideology)
+six = lm(data = cemp_exp, continue ~ treatment+ gender +income +rural +ideology + treatment:ideology)
+
+cov1        <- vcovHC(one, type = "HC2")
+robust1     <- sqrt(diag(cov1))
+
+cov2        <- vcovHC(two, type = "HC2")
+robust2     <- sqrt(diag(cov2))
+
+cov3        <- vcovHC(three, type = "HC2")
+robust3     <- sqrt(diag(cov3))
+
+cov4        <- vcovHC(four, type = "HC2")
+robust4     <- sqrt(diag(cov4))
+
+cov5        <- vcovHC(five, type = "HC2")
+robust5     <- sqrt(diag(cov5))
+
+cov6        <- vcovHC(six, type = "HC2")
+robust6     <- sqrt(diag(cov6))
+
+
+models2 <- list(
+one = lm(data = cemp_exp, continue ~ treatment),
+two = lm(data = cemp_exp, continue ~ treatment + gender +income +rural),
+three = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +con_binary),
+four = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +con_binary + treatment:con_binary),
+five = lm(data = cemp_exp, continue ~ treatment + gender +income +rural +ideology),
+six = lm(data = cemp_exp, continue ~ treatment+ gender +income +rural +ideology + treatment:ideology))
+
+
+stargazer(models2,
+          type = 'latex',
+          header=FALSE, # to get rid of r package output text
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          font.size = "small", # to make font size smaller
+           title="Policy Continuance",
+          dep.var.caption = "Should the federal government continue carbon pricing?", 
+          column.labels = c("Bivariate",
+                            "Controls", 
+                            '\\shortstack{Conservative \\\\ Partisanship}',
+                            '\\shortstack{Partisanship \\\\ Interaction}',
+                            '\\shortstack{Conservative \\\\ Ideology}',
+                             '\\shortstack{Ideology \\\\ Interaction}'),
+          model.numbers = F,
+          single.row=F,
+          omit.stat=c("f", "ser"),
+          covariate.labels = c("Treatment",
+                               "Woman",
+                               ">90K income",
+                               "Rural",
+                               '\\shortstack{Conservative  \\\\ Identification}',
+                               '\\shortstack{Conservative \\\\ Interaction}',
+                               "Ideology",
+                               "\\shortstack{Ideology \\\\ Interaction}"),
+          dep.var.labels=c("Strongly Disagree (0) - Strongly Agree (4)"),
+          out =  "models2.tex")
+```
+
+
+
+
+```{r, results='asis'}
+####increase regression
+###
+one = lm(data = cemp_exp, increase ~ treatment)
+two = lm(data = cemp_exp, increase ~ treatment + gender +income +rural)
+three = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +con_binary)
+four = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +con_binary + treatment:con_binary)
+five = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +ideology)
+six = lm(data = cemp_exp, increase ~ treatment+ gender +income +rural +ideology + treatment:ideology)
+
+cov1        <- vcovHC(one, type = "HC2")
+robust1     <- sqrt(diag(cov1))
+
+cov2        <- vcovHC(two, type = "HC2")
+robust2     <- sqrt(diag(cov2))
+
+cov3        <- vcovHC(three, type = "HC2")
+robust3     <- sqrt(diag(cov3))
+
+cov4        <- vcovHC(four, type = "HC2")
+robust4     <- sqrt(diag(cov4))
+
+cov5        <- vcovHC(five, type = "HC2")
+robust5     <- sqrt(diag(cov5))
+
+cov6        <- vcovHC(six, type = "HC2")
+robust6     <- sqrt(diag(cov6))
+
+models3 <- list(
+one = lm(data = cemp_exp, increase ~ treatment),
+two = lm(data = cemp_exp, increase ~ treatment + gender +income +rural),
+three = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +con_binary),
+four = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +con_binary + treatment:con_binary),
+five = lm(data = cemp_exp, increase ~ treatment + gender +income +rural +ideology),
+six = lm(data = cemp_exp, increase ~ treatment+ gender +income +rural +ideology + treatment:ideology))
+
+
+
+stargazer(models3,
+          type = 'latex',
+          header=FALSE, # to get rid of r package output text
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          font.size = "small", # to make font size smaller
+           title="Policy Change",
+          dep.var.caption = "Should the federal government decrease/increase the current price on carbon?", 
+          column.labels = c("Bivariate",
+                            "Controls", 
+                            '\\shortstack{Conservative \\\\ Partisanship}',
+                            '\\shortstack{Partisanship \\\\ Interaction}',
+                            '\\shortstack{Conservative \\\\ Ideology}',
+                             '\\shortstack{Ideology \\\\ Interaction}'),
+          model.numbers = F,
+          single.row=F,
+          omit.stat=c("f", "ser"),
+          covariate.labels = c("Treatment",
+                               "Woman",
+                               ">90K income",
+                               "Rural",
+                               '\\shortstack{Conservative  \\\\ Identification}',
+                               '\\shortstack{Conservative  \\\\ Interaction}',
+                               "Ideology",
+                               "\\shortstack{Ideology \\\\ Interaction}"),
+          dep.var.labels=c("Significantly Decrease (0) - Significantly Increase (4)"),
+          out =  "models3.tex")
+```
+
+
+
+```{r}
+policy1 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_1_1_pre) == TRUE, 0, cemp$Party_policies_1_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_1_2_pre) == TRUE, 0, cemp$Party_policies_1_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_1_3_pre) == TRUE, 0, cemp$Party_policies_1_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_1_4_pre) == TRUE, 0, cemp$Party_policies_1_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_1_5_pre) == TRUE, 0, cemp$Party_policies_1_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_1_6_pre) == TRUE, 0, cemp$Party_policies_1_6_pre) %>% table()))
+
+policy1<-policy1 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policy2 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_2_1_pre) == TRUE, 0, cemp$Party_policies_2_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_2_2_pre) == TRUE, 0, cemp$Party_policies_2_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_2_3_pre) == TRUE, 0, cemp$Party_policies_2_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_2_4_pre) == TRUE, 0, cemp$Party_policies_2_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_2_5_pre) == TRUE, 0, cemp$Party_policies_2_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_2_6_pre) == TRUE, 0, cemp$Party_policies_2_6_pre) %>% table()))
+
+policy2<-policy2 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policy3 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_3_1_pre) == TRUE, 0, cemp$Party_policies_3_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_3_2_pre) == TRUE, 0, cemp$Party_policies_3_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_3_3_pre) == TRUE, 0, cemp$Party_policies_3_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_3_4_pre) == TRUE, 0, cemp$Party_policies_3_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_3_5_pre) == TRUE, 0, cemp$Party_policies_3_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_3_6_pre) == TRUE, 0, cemp$Party_policies_3_6_pre) %>% table()))
+
+policy3<-policy3 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policy4 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_4_1_pre) == TRUE, 0, cemp$Party_policies_4_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_4_2_pre) == TRUE, 0, cemp$Party_policies_4_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_4_3_pre) == TRUE, 0, cemp$Party_policies_4_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_4_4_pre) == TRUE, 0, cemp$Party_policies_4_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_4_5_pre) == TRUE, 0, cemp$Party_policies_4_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_4_6_pre) == TRUE, 0, cemp$Party_policies_4_6_pre) %>% table()))
+
+policy4<-policy4 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policy5 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_5_1_pre) == TRUE, 0, cemp$Party_policies_5_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_5_2_pre) == TRUE, 0, cemp$Party_policies_5_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_5_3_pre) == TRUE, 0, cemp$Party_policies_5_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_5_4_pre) == TRUE, 0, cemp$Party_policies_5_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_5_5_pre) == TRUE, 0, cemp$Party_policies_5_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_5_6_pre) == TRUE, 0, cemp$Party_policies_5_6_pre) %>% table()))
+
+policy5<-policy5 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policy6 <- as.data.frame(rbind(
+ifelse(is.na(cemp$Party_policies_6_1_pre) == TRUE, 0, cemp$Party_policies_6_1_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_6_2_pre) == TRUE, 0, cemp$Party_policies_6_2_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_6_3_pre) == TRUE, 0, cemp$Party_policies_6_3_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_6_4_pre) == TRUE, 0, cemp$Party_policies_6_4_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_6_5_pre) == TRUE, 0, cemp$Party_policies_6_5_pre) %>% table(),
+ifelse(is.na(cemp$Party_policies_6_6_pre) == TRUE, 0, cemp$Party_policies_6_6_pre) %>% table()))
+
+policy6<-policy6 %>% 
+mutate(prop = round(`1`/(`1` + `0`),2)) %>% 
+  select(prop)
+
+policies <- as.data.frame(cbind(rbind(policy1,
+      policy2,
+      policy3,
+      policy4,
+      policy5,
+      policy6), "party" = c(1:6), "question" = c(rep("Carbon pricing/tax",6),
+  rep("Ban on assault-style weapons",6),
+  rep("Proof of vaccine system",6),
+  rep("Ban foreign investors from buying homes in Canada",6),
+  rep("National daycare system",6),
+  rep("Privatization of healthcare",6))))
+
+
+policies$question = str_wrap(policies$question, width = 15)
+policies$question <- factor(policies$question, levels = c("Carbon pricing/\ntax",
+                                                          "Ban on assault-\nstyle weapons",
+                                                          "Proof of\nvaccine system",
+                                                          "Ban foreign\ninvestors from\nbuying homes in\nCanada",
+                                                          "National\ndaycare system",
+                                                          "Privatization\nof healthcare"))
+
+policies <- policies %>%  
+  mutate(party = case_when(party == 1 ~ "Lib",
+                                party == 2 ~ "Con",
+                                party == 3 ~ "NDP",
+                                party == 4 ~ "Bloc",
+                                party == 5 ~ "Green",
+                                party == 6 ~ "PPC"))
+policies$Party <- factor(policies$party, levels = c("Lib", "Con", "NDP", "Bloc", "Green", "PPC"))
+
+policy_inclusion <- policies %>% 
+    ggplot(aes(x = question, y = prop, fill = Party)) +
+  geom_col(position = "dodge2")+
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 12)) +
+    scale_fill_manual(values = c("#D71920", "#1A4782", "#F37021", "#33B2CC", "#3D9B35", "#8A2BE2"))+
+  theme_bw() +
+  ggtitle("Which parties, if any, have proposed the following policies?") +
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ylab("Percent of respondents checking YES") +
+  xlab("")
+
+ggsave("policy_inclusion.png")
+```
+
+
+```{r, results='asis'}
+cemp_exp$knowledge <- as.factor(ifelse(is.na(cemp_exp$Party_policies_1_2_pre) == TRUE, 0, cemp_exp$Party_policies_1_2_pre))
+
+
+###
+models_knowledge <- list(
+one = lm(data = cemp_exp, accurate ~ treatment * knowledge),
+two = lm(data = cemp_exp, continue ~ treatment * knowledge),
+three = lm(data = cemp_exp, increase ~ treatment * knowledge))
+
+cov1        <- vcovHC(one, type = "HC2")
+robust1     <- sqrt(diag(cov1))
+
+cov2        <- vcovHC(two, type = "HC2")
+robust2     <- sqrt(diag(cov2))
+
+cov3        <- vcovHC(three, type = "HC2")
+robust3     <- sqrt(diag(cov3))
+
+
+
+
+stargazer(models_knowledge,
+          type = 'latex',
+          se=list(robust1, 
+                  robust2,
+                  robust3),
+          header=FALSE, # to get rid of r package output text
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          font.size = "small", # to make font size smaller 
+          
+
+          model.numbers = F, dep.var.labels.include = F,
+          single.row=F,
+          omit.stat=c("f", "ser"),
+          covariate.labels = c("Treatment",
+                               "Platform Knowledge",
+                               '\\shortstack{Platform Knowledge \\\\ Interaction}'),
+          column.labels = c('\\shortstack{Cost- \\\\ Effective}',
+                            '\\shortstack{Policy \\\\ Support}',
+                            '\\shortstack{Price \\\\ Change}'),
+                     title="Controlling for Platform Knowledge",
+          out =  "models_knowledge.tex")
+
+```
+
+
+
+```{r, results='asis'}
+cemp_exp <- cemp_exp %>% 
+  mutate(straight = ifelse(is.na(straight_line_pre) == TRUE,0,1))
+
+cemp_time <- cemp_exp %>% filter(Duration..in.seconds._pre >= quantile(Duration..in.seconds._pre, .05) &
+                      Duration..in.seconds._pre <= quantile(Duration..in.seconds._pre, .95))
+
+cemp_time <- cemp_time %>% filter(straight == 0)
+
+### now regression with subsetted data, people who didnt straughtline and within .05 an d.95 time duration quantiles
+
+
+###
+models_time <- list(
+one = lm(data = cemp_time, accurate ~ treatment),
+two = lm(data = cemp_time, continue ~ treatment),
+three = lm(data = cemp_time, increase ~ treatment))
+
+cov1        <- vcovHC(one, type = "HC2")
+robust1     <- sqrt(diag(cov1))
+
+cov2        <- vcovHC(two, type = "HC2")
+robust2     <- sqrt(diag(cov2))
+
+cov3        <- vcovHC(three, type = "HC2")
+robust3     <- sqrt(diag(cov3))
+
+
+
+
+stargazer(models_time,
+          type = 'latex',
+          se=list(robust1, 
+                  robust2,
+                  robust3),
+          header=FALSE, # to get rid of r package output text
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          font.size = "small", # to make font size smaller 
+          
+
+          model.numbers = F, dep.var.labels.include = F,
+          single.row=F,
+          omit.stat=c("f", "ser"),
+          covariate.labels = c("Treatment"),
+          column.labels = c('\\shortstack{Cost- \\\\ Effective}',
+                            '\\shortstack{Policy \\\\ Support}',
+                            '\\shortstack{Price \\\\ Change}'),
+                     title="Bivariate Models Filtered by Attention",
+          out =  "models_time.tex")
+
+```
+
